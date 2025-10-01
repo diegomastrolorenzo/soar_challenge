@@ -90,6 +90,71 @@ def calculate_risk(ti_hits):
             }
 
 
+def calculate_triage_score(incident):
+    base_score = {
+        "Malware": 70,
+        "Phishing": 60,
+        "Beaconing": 65,
+        "CredentialAccess": 75,
+        "C2": 80,
+        "Unknown": 40
+    }
+    triage_score = base_score[incident.source_alert.get("type", "Unknown")]
+
+    flagged_ioc_count = {"malicious": 0, "suspicious": 0}
+    extra_flagged_count = 0  # The ones flagged after the first, worth 5 points each
+
+    # There's definitely a cleaner way to do this score calculation but this is good enough
+    for i in incident.indicators:
+        if i["risk"]["verdict"] in flagged_ioc_count:
+            flagged_ioc_count[i["risk"]["verdict"]] += 1
+
+    if flagged_ioc_count["malicious"]:
+        triage_score += 20
+        extra_flagged_count += flagged_ioc_count["malicious"] - 1
+
+    if flagged_ioc_count["suspicious"]:
+        triage_score += 10
+        extra_flagged_count += flagged_ioc_count["suspicious"] - 1
+
+    if extra_flagged_count >= 4:
+        triage_score += 20
+    else:
+        triage_score += extra_flagged_count * 5
+
+
+    with open("configs/allowlists.yml") as f:
+        allowlist = yaml.safe_load(f)
+
+    for i in incident.indicators:
+        if i["value"] in allowlist["indicators"][i["type"]]:
+            i["allowlisted"] = True
+        else:
+            i["allowlisted"] = False
+
+    all_allowlisted = True
+    at_least_one_allowlisted = False
+    for i in incident.indicators:
+        if i["allowlisted"]:
+            at_least_one_allowlisted = True
+        if not i["allowlisted"]:
+            all_allowlisted = False
+
+    if at_least_one_allowlisted:
+        triage_score -= 25
+        incident.internal["tags"].append("allowlisted")
+
+    if all_allowlisted:
+        triage_score = 0
+        incident.internal["tags"].append("supressed=true")
+
+    if triage_score > 100:
+        triage_score = 100
+    if triage_score < 0:
+        triage_score = 0
+
+    return triage_score
+
 ### Ingestion ###
 
 # Arg parsing
@@ -110,25 +175,28 @@ except FileNotFoundError:
 
 ### Normalization ###
 
-incident = Incident()
+incident = Incident(alert_json)
 
 # Indicator loading
-for ioc_type, ioc_list in alert_json["indicators"].items():
+for ioc_type, ioc_list in incident.source_alert["indicators"].items():
     for ioc in ioc_list:
         incident.indicators.append({"type": ioc_type, "value": ioc, "allowlisted": None, "risk": None})
 
 # Asset loading
-if alert_json.get("asset", None):
-    incident.asset["device_id"] = alert_json["asset"].get("device_id", None)
-    incident.asset["hostname"] = alert_json["asset"].get("hostname", None)
-    incident.asset["ip"] = alert_json["asset"].get("ip", None)
+if incident.source_alert.get("asset", None):
+    incident.asset["device_id"] = incident.source_alert["asset"].get("device_id", None)
+    incident.asset["hostname"] = incident.source_alert["asset"].get("hostname", None)
+    incident.asset["ip"] = incident.source_alert["asset"].get("ip", None)
 
 ### Enrichment ###
 # doing TI for the artifacts and setting risk scores
 for i in incident.indicators:
-    print("----", i, "----")
     ti_hits = run_ti_for_ioc(i["type"], i["value"])  # in real life these would be api calls with the ioc name and type
     i["risk"] = calculate_risk(ti_hits)
 
 ### Triage ###
+
+triage_score = calculate_triage_score(incident)
+print(incident.indicators)
+print(triage_score)
 
