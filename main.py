@@ -8,13 +8,48 @@ import jinja2
 from incident import Incident
 
 
-def get_iso_ts_now():
-    date_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    date_str = date_str.split("+")[0] + "Z"
+def parse_arguments():
+    if len(sys.argv) != 2:
+        print("Error: Please provide a single file path as an argument.")
+        print("Usage: python main.py path/to/alert.json")
+        sys.exit(1)
 
-    # I kept up to the millisecond because in my machine all the stages (ingest|enrich|triage|respond) were done in the
-    # same second, in a real scenario this is not needed and you would remove the milliseconds also
-    return date_str
+    if not os.path.isfile(sys.argv[1]):
+        print(f"Error: {sys.argv[1]} is not a file")
+        print("Usage: python main.py path/to/alert.json")
+
+    alert_path = sys.argv[1]
+
+    # Assuming well-formed jsons because in a real scenario they come from a SIEM
+    try:
+        with open(alert_path) as f:
+            alert_json = json.load(f)
+    except FileNotFoundError:
+        print(f"Error: {alert_path} does not exist.")
+        sys.exit(1)
+
+    return alert_json
+
+
+def load_indicators(incident):
+    for ioc_type, ioc_list in incident.source_alert["indicators"].items():
+        for ioc in ioc_list:
+            incident.indicators.append({"type": ioc_type, "value": ioc, "allowlisted": None, "risk": None})
+
+
+def load_assets(incident):
+    if incident.source_alert.get("asset", None):
+        incident.asset["device_id"] = incident.source_alert["asset"].get("device_id", None)
+        incident.asset["hostname"] = incident.source_alert["asset"].get("hostname", None)
+        incident.asset["ip"] = incident.source_alert["asset"].get("ip", None)
+
+
+def indicator_enrichment(incident):
+    for i in incident.indicators:
+        ti_hits = run_ti_for_ioc(i["type"],
+                                 i["value"])  # in real life these would be api calls with the ioc name and type
+
+        i["risk"] = calculate_risk(ti_hits)
 
 
 def run_ti_for_ioc(ioc_type, ioc_value):
@@ -98,6 +133,15 @@ def calculate_risk(ti_hits):
             "score": most_severe_one["score"],
             "sources": sources
             }
+
+
+def get_iso_ts_now():
+    date_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    date_str = date_str.split("+")[0] + "Z"
+
+    # I kept up to the millisecond because in my machine all the stages (ingest|enrich|triage|respond) were done in the
+    # same second, in a real scenario this is not needed and you would remove the milliseconds also
+    return date_str
 
 
 def calculate_triage_score(incident):
@@ -241,54 +285,22 @@ def create_summary(incident):
 
 
 def main():
-    ### Ingestion ###
-
-    # Arg parsing
-    if len(sys.argv) != 2:
-        print("Error: Please provide a single file path as an argument.")
-        print("Usage: python main.py path/to/alert.json")
-        sys.exit(1)
-
-    alert_path = sys.argv[1]
-
-    # Assuming well-formed jsons because in a real scenario they come from a SIEM
-    try:
-        with open(alert_path) as f:
-            alert_json = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: {alert_path} does not exist.")
-        sys.exit(1)
-
+    alert_json = parse_arguments()
     incident = Incident(alert_json)
+
     start_new_stage(incident, "ingest")
+    load_indicators(incident)
+    load_assets(incident)
 
-    # Indicator loading
-    for ioc_type, ioc_list in incident.source_alert["indicators"].items():
-        for ioc in ioc_list:
-            incident.indicators.append({"type": ioc_type, "value": ioc, "allowlisted": None, "risk": None})
-
-    # Asset loading
-    if incident.source_alert.get("asset", None):
-        incident.asset["device_id"] = incident.source_alert["asset"].get("device_id", None)
-        incident.asset["hostname"] = incident.source_alert["asset"].get("hostname", None)
-        incident.asset["ip"] = incident.source_alert["asset"].get("ip", None)
-
-    ### Enrichment ###
     start_new_stage(incident, "enrich")
-    # doing TI for the artifacts and setting risk scores
-    for i in incident.indicators:
-        ti_hits = run_ti_for_ioc(i["type"],
-                                 i["value"])  # in real life these would be api calls with the ioc name and type
-        i["risk"] = calculate_risk(ti_hits)
+    indicator_enrichment(incident)
 
-    ### Triage ###
     start_new_stage(incident, "triage")
     triage_score = calculate_triage_score(incident)
     incident.triage = build_triage_object(incident, triage_score)
-
     incident.mitre = build_mitre_object(incident)
-    start_new_stage(incident, "respond")
 
+    start_new_stage(incident, "respond")
     if should_isolate(incident):
         isolate(incident)
 
