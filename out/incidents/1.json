@@ -1,0 +1,128 @@
+{
+    "incident_id": 1,
+    "source_alert": {
+        "alert_id": "sen-001",
+        "source": "sentinel",
+        "type": "CredentialAccess",
+        "created_at": "2025-08-20T14:03:10Z",
+        "asset": {
+            "device_id": "dev-9001",
+            "hostname": "HR-LAPTOP-22",
+            "ip": "10.2.3.44"
+        },
+        "indicators": {
+            "ipv4": [
+                "1.2.3.4"
+            ],
+            "domains": [
+                "bad.example.net"
+            ],
+            "urls": [
+                "http://bad.example.net/login"
+            ],
+            "sha256": [
+                "7b1f4c2d16e0a0b43cbae2f9a9c2dd7e2bb3a0aaad6c0ad66b341f8b7deadbe0"
+            ]
+        },
+        "raw": {
+            "provider": "azure",
+            "workspace": "prod",
+            "rule_id": "AZ-CRED-77"
+        }
+    },
+    "asset": {
+        "device_id": "dev-9001",
+        "hostname": "HR-LAPTOP-22",
+        "ip": "10.2.3.44"
+    },
+    "indicators": [
+        {
+            "type": "ipv4",
+            "value": "1.2.3.4",
+            "allowlisted": false,
+            "risk": {
+                "verdict": "suspicious",
+                "score": 80,
+                "sources": [
+                    "anomali"
+                ]
+            }
+        },
+        {
+            "type": "domains",
+            "value": "bad.example.net",
+            "allowlisted": false,
+            "risk": {
+                "verdict": "malicious",
+                "score": 92,
+                "sources": [
+                    "defender_ti"
+                ]
+            }
+        },
+        {
+            "type": "urls",
+            "value": "http://bad.example.net/login",
+            "allowlisted": false,
+            "risk": {
+                "verdict": "unknown",
+                "score": 0,
+                "sources": []
+            }
+        },
+        {
+            "type": "sha256",
+            "value": "7b1f4c2d16e0a0b43cbae2f9a9c2dd7e2bb3a0aaad6c0ad66b341f8b7deadbe0",
+            "allowlisted": false,
+            "risk": {
+                "verdict": "malicious",
+                "score": 95,
+                "sources": [
+                    "reversinglabs"
+                ]
+            }
+        }
+    ],
+    "triage": {
+        "severity": 100,
+        "bucket": "Critical",
+        "tags": [],
+        "suppressed": false
+    },
+    "mitre": {
+        "techniques": [
+            "T1056",
+            "T1555"
+        ]
+    },
+    "actions": [
+        {
+            "type": "isolate",
+            "target": "device:dev-9001",
+            "result": "isolated",
+            "ts": "2025-10-02T02:32:30.785565Z"
+        }
+    ],
+    "timeline": [
+        {
+            "stage": "ingest",
+            "ts": "2025-10-02T02:32:30.780659Z",
+            "details": "Starting ingest stage"
+        },
+        {
+            "stage": "enrich",
+            "ts": "2025-10-02T02:32:30.780679Z",
+            "details": "Starting enrich stage"
+        },
+        {
+            "stage": "triage",
+            "ts": "2025-10-02T02:32:30.783620Z",
+            "details": "Starting triage stage"
+        },
+        {
+            "stage": "respond",
+            "ts": "2025-10-02T02:32:30.784818Z",
+            "details": "Starting respond stage"
+        }
+    ]
+}
