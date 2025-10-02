@@ -1,4 +1,4 @@
-# Analyst Summary - 1
+# Analyst Summary - {{ incident_id }}
 
 ## Incident
 
@@ -16,7 +16,7 @@
 | Type | Value | Risk | Allowlisted |
 | :--- | :--- | :--- | :--- |
 {% for i in indicators -%}
-| {{ i.type }}  |  {{ i.value }} | {{ i.risk.verdict | capitalize }} | {{ i.allowlisted }} |
+| {{ i.type }}  |  `{{ i.value }}` | {{ i.risk.verdict | capitalize }} | {{ i.allowlisted }} |
 {% endfor -%}
 
 ***
