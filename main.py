@@ -1,10 +1,19 @@
+import datetime
 import json
 import yaml
 import sys
 import os
-from stringprep import in_table_c9
+import jinja2
 
 from incident import Incident
+
+def get_iso_ts_now():
+    date_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    date_str = date_str.split("+")[0] + "Z"
+
+    # I kept up to the millisecond because in my machine all the stages (ingest|enrich|triage|respond) were done in the
+    # same second, in a real scenario this is not needed and you would remove the milliseconds also
+    return date_str
 
 
 def run_ti_for_ioc(ioc_type, ioc_value):
@@ -99,7 +108,7 @@ def calculate_triage_score(incident):
         "C2": 80,
         "Unknown": 40
     }
-    triage_score = base_score[incident.source_alert.get("type", "Unknown")]
+    triage_score = base_score.get(incident.source_alert.get("type", "Unknown"), 40)
 
     flagged_ioc_count = {"malicious": 0, "suspicious": 0}
     extra_flagged_count = 0  # The ones flagged after the first, worth 5 points each
@@ -155,6 +164,86 @@ def calculate_triage_score(incident):
 
     return triage_score
 
+
+def build_triage_object(incident, triage_score):
+    if triage_score == 0:
+        bucket = "Suppresed"
+    elif 1 <= triage_score <= 39:
+        bucket = "Low"
+    elif 40 <= triage_score <= 69:
+        bucket = "Medium"
+    elif 70 <= triage_score <= 89:
+        bucket = "High"
+    else:
+        bucket = "Critical"
+
+    return {
+        "severity": triage_score,
+        "bucket": bucket,
+        "tags": incident.internal["tags"],
+        "suppressed": bool(triage_score == 0), # It's a bool anyways, type casting for clarity
+    }
+
+def build_mitre_object(incident):
+    with open("configs/mitre_map.yml") as f:
+        mitre_map = yaml.safe_load(f)
+
+    alert_type = incident.source_alert.get("type", "Unknown")
+
+    if alert_type in mitre_map["types"]:
+        techniques = mitre_map["types"][alert_type]
+    else:
+        techniques = mitre_map["defaults"]
+
+    return {"techniques": techniques}
+
+def should_isolate(incident):
+    with open("configs/allowlists.yml") as f:
+        allowlist = yaml.safe_load(f)
+
+    asset_allowlisted = incident.asset.get("device_id", "Unknown") in allowlist["assets"]["device_ids"]
+
+    return incident.triage["severity"] >= 70 and not asset_allowlisted
+
+
+def isolate(incident):
+    """
+    Append a line to out/isolation.log:
+    ■
+
+    """
+    if not os.path.isdir("out"):
+        os.mkdir("out")
+
+    ts_now =  get_iso_ts_now()
+    dev_id = incident.asset.get("device_id", "Unknown") # Should never be unknown but this doesn't hurt
+    inc_id = incident.incident_id
+    text_to_write = f"{ts_now} isolate device_id={dev_id} incident={inc_id} result=isolated"
+
+    with open("out/isolation.log", "a") as f:
+        f.write(text_to_write + "\n")
+
+    action = { "type":"isolate","target":f"device:{dev_id}","result":"isolated","ts":ts_now}
+    incident.actions.append(action)
+
+def start_new_stage(incident, stage):
+    ts_now = get_iso_ts_now()
+    obj = {"stage": stage, "ts": ts_now, "details": f"Starting {stage} stage"}
+    incident.timeline.append(obj)
+
+def create_summary(incident):
+
+    with open("summary_template.j2") as f:
+        markdown_template = f.read()
+
+    template = jinja2.Template(markdown_template)
+    rendered_markdown = template.render(**vars(incident))
+
+    return rendered_markdown
+
+
+
+
 ### Ingestion ###
 
 # Arg parsing
@@ -173,9 +262,8 @@ except FileNotFoundError:
     print(f"Error: {alert_path} does not exist.")
     sys.exit(1)
 
-### Normalization ###
-
 incident = Incident(alert_json)
+start_new_stage(incident, "ingest")
 
 # Indicator loading
 for ioc_type, ioc_list in incident.source_alert["indicators"].items():
@@ -189,14 +277,35 @@ if incident.source_alert.get("asset", None):
     incident.asset["ip"] = incident.source_alert["asset"].get("ip", None)
 
 ### Enrichment ###
+start_new_stage(incident, "enrich")
 # doing TI for the artifacts and setting risk scores
 for i in incident.indicators:
     ti_hits = run_ti_for_ioc(i["type"], i["value"])  # in real life these would be api calls with the ioc name and type
     i["risk"] = calculate_risk(ti_hits)
 
 ### Triage ###
-
+start_new_stage(incident, "triage")
 triage_score = calculate_triage_score(incident)
-print(incident.indicators)
-print(triage_score)
+incident.triage = build_triage_object(incident, triage_score)
+
+incident.mitre = build_mitre_object(incident)
+start_new_stage(incident, "respond")
+
+if should_isolate(incident):
+    isolate(incident)
+
+# since I finished processing these internal things are no longer needed.
+# I remove them so I can just dump the whole incident object into the output file
+del incident.internal
+
+os.makedirs("out/incidents", exist_ok=True)
+with open(f"out/incidents/{incident.incident_id}.json", "w") as f:
+    json.dump(vars(incident), f, indent=4)
+
+jinja_summary = create_summary(incident)
+os.makedirs("out/summaries", exist_ok=True)
+with open(f"out/summaries/{incident.incident_id}.md", "w") as f:
+    f.write(jinja_summary)
+
+
 

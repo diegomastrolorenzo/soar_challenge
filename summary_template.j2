@@ -1,0 +1,54 @@
+# Analyst Summary - 1
+
+## Incident
+
+| Field | Value
+| :--- | :--- |
+| ID | {{ incident_id }} |
+| Source Alert | {{ source_alert.alert_id }} - {{ source_alert.type }} |
+| Affected Asset | {{ asset.hostname }} |
+| IP Address | {{ asset.ip }} |
+
+***
+
+## Indicators
+
+| Type | Value | Risk | Allowlisted |
+| :--- | :--- | :--- | :--- |
+{% for i in indicators -%}
+| {{ i.type }}  |  {{ i.value }} | {{ i.risk.verdict | capitalize }} | {{ i.allowlisted }} |
+{% endfor -%}
+
+***
+
+
+## Severity & Tags
+
+| Field | Value
+| :--- | :--- |
+{% for k,v in triage.items() -%}
+| {{ k | capitalize }}  |  {{ v }} |
+{% endfor -%}
+
+***
+
+## ATT&CK Techniques
+
+| Technique ID |
+| :--- |
+{% for i in mitre.techniques -%}
+| {{ i }} |
+{% endfor -%}
+
+
+***
+
+## Actions Taken
+
+| Time | Type | Target | Result |
+| :--- | :--- | :--- | :--- |
+{% for i in actions -%}
+| {{ i.ts }} | {{ i.type | capitalize }} | {{ i.target }} | {{ i.result | capitalize }} |
+{% endfor -%}
+
+***
